@@ -71,11 +71,10 @@ async fn create_read_update_list() {
         .await
         .unwrap();
     assert!(!result.is_error);
-    let record: ArtifactRecord = serde_json::from_str(&result.text()).unwrap();
-    assert_eq!(record.title, "Release Notes");
-    assert_eq!(record.versions.len(), 1);
-    assert_eq!(record.versions[0].body, "## v1.0\nReleased on time.");
-    assert_eq!(record.versions[0].author, ArtifactAuthor::Agent);
+    let read_back: serde_json::Value = serde_json::from_str(&result.text()).unwrap();
+    assert_eq!(read_back["title"], "Release Notes");
+    assert_eq!(read_back["version"], 1);
+    assert_eq!(read_back["content"], "## v1.0\nReleased on time.");
 
     // Step 3: update — push version 2
     let result = update
@@ -95,10 +94,12 @@ async fn create_read_update_list() {
         .await
         .unwrap();
     assert!(!result.is_error);
-    let record: ArtifactRecord = serde_json::from_str(&result.text()).unwrap();
+    let read_back: serde_json::Value = serde_json::from_str(&result.text()).unwrap();
+    assert_eq!(read_back["version"], 2);
+    assert_eq!(read_back["content"], "## v1.1\nFixed the critical bug.");
+    let record = artifacts.get(&id).await.unwrap().unwrap();
     assert_eq!(record.versions.len(), 2);
-    assert_eq!(record.versions[0].body, "## v1.0\nReleased on time.");
-    assert_eq!(record.versions[1].body, "## v1.1\nFixed the critical bug.");
+    assert_eq!(record.versions[0].author, ArtifactAuthor::Agent);
     // human_edit_diff is None because no operator-authored version
     assert!(
         record.human_edit_diff().is_none(),

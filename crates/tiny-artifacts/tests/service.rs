@@ -15,7 +15,7 @@ use tiny_artifacts::{
     ArtifactObserver, ArtifactPublisher, ArtifactRecord, ArtifactStatus, ArtifactStore,
     ArtifactVersion, Artifacts, ArtifactsError, Author, BlobFileStore, Content, CreateArtifactTool,
     DeleteArtifactTool, FileRefError, FileRoots, FileStore, PublishOptions, PublishedLink,
-    ShareArtifactTool, UpdateArtifactTool,
+    ShareArtifactTool, TextExtractor, UpdateArtifactTool,
 };
 use tinystoragedrivers_testkit::memory_storage;
 use tinystoragedrivers_types::Scope;
@@ -811,11 +811,28 @@ async fn text_versions_are_not_copied() {
     assert!(shown.contains("file_store: true"), "{shown}");
 }
 
+struct Upper;
+
+#[async_trait::async_trait]
+impl TextExtractor for Upper {
+    async fn extract(&self, name: &str, bytes: &[u8]) -> anyhow::Result<Option<String>> {
+        match Path::new(name).extension().and_then(|ext| ext.to_str()) {
+            Some("bin") => return Ok(None),
+            Some("bad") => anyhow::bail!("unreadable"),
+            _ => {}
+        }
+        Ok(Some(String::from_utf8_lossy(bytes).to_uppercase()))
+    }
+}
+
+fn tool<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
+    tools.iter().find(|t| t.name() == name).unwrap().as_ref()
+}
+
 async fn updated(body: &str, args: serde_json::Value) -> anyhow::Result<String> {
     let artifacts = Arc::new(Artifacts::new(Arc::new(MemStore::default())));
     let tools = registered_tools(artifacts.clone(), Author::agent("writer"));
-    let tool = |name: &str| tools.iter().find(|t| t.name() == name).unwrap();
-    let created = tool("create_artifact")
+    let created = tool(&tools, "create_artifact")
         .execute(json!({ "kind": "text", "title": "T", "body": body }))
         .await
         .unwrap();
@@ -825,7 +842,7 @@ async fn updated(body: &str, args: serde_json::Value) -> anyhow::Result<String> 
         .to_string();
     let mut call = args;
     call["artifact_id"] = json!(id);
-    tool("update_artifact").execute(call).await?;
+    tool(&tools, "update_artifact").execute(call).await?;
     let record = artifacts.get(&id).await.unwrap().unwrap();
     Ok(record.latest().unwrap().body.clone())
 }
@@ -852,4 +869,99 @@ async fn append_is_refused_with_a_body_and_when_empty() {
     assert!(both.unwrap_err().to_string().contains("not both"));
     let empty = updated("one", json!({ "append": "  " })).await;
     assert!(empty.unwrap_err().to_string().contains("lines to add"));
+}
+
+#[tokio::test]
+async fn a_text_artifact_refuses_a_path_and_says_to_use_body() {
+    let artifacts = Arc::new(Artifacts::new(Arc::new(MemStore::default())));
+    let tools = registered_tools(artifacts.clone(), Author::agent("writer"));
+    for args in [
+        json!({ "kind": "text", "title": "T", "path": "poem.txt" }),
+        json!({ "kind": "text", "title": "T", "path": "poem.txt", "body": "one" }),
+        json!({ "kind": "html", "title": "T", "path": "page.html", "body": "<p>" }),
+    ] {
+        let refused = tool(&tools, "create_artifact")
+            .execute(args)
+            .await
+            .unwrap_err();
+        assert!(refused.to_string().contains("as `body`"), "{refused}");
+    }
+    assert!(artifacts.list().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn read_returns_only_the_newest_text() {
+    let artifacts = Arc::new(Artifacts::new(Arc::new(MemStore::default())));
+    let tools = registered_tools(artifacts.clone(), Author::agent("writer"));
+    let created = tool(&tools, "create_artifact")
+        .execute(json!({ "kind": "html", "title": "T", "body": "<p>old</p>" }))
+        .await
+        .unwrap();
+    let id = json_of(&created)["artifact_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    tool(&tools, "update_artifact")
+        .execute(json!({ "artifact_id": id, "body": "<p>new</p>" }))
+        .await
+        .unwrap();
+
+    let read = tool(&tools, "read_artifact")
+        .execute(json!({ "artifact_id": id }))
+        .await
+        .unwrap();
+
+    let read = json_of(&read);
+    assert_eq!(read["content"], "<p>new</p>");
+    assert_eq!(read["version"], 2);
+    assert!(!read.to_string().contains("old"));
+}
+
+async fn read_file(name: &str, extractor: bool) -> serde_json::Value {
+    let root = workdir();
+    std::fs::write(root.join(name), b"quarterly plan").unwrap();
+    let mut artifacts = Artifacts::new(Arc::new(MemStore::default()))
+        .with_file_roots(FileRoots::new([root.clone()]))
+        .with_file_store(blob_file_store());
+    if extractor {
+        artifacts = artifacts.with_text_extractor(Arc::new(Upper));
+    }
+    let artifacts = Arc::new(artifacts);
+    let tools = registered_tools(artifacts.clone(), Author::agent("writer"));
+    let path = root.join(name);
+    let created = tool(&tools, "create_artifact")
+        .execute(json!({ "kind": "file", "title": "T", "path": path.to_string_lossy() }))
+        .await
+        .unwrap();
+    let id = json_of(&created)["artifact_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let read = tool(&tools, "read_artifact")
+        .execute(json!({ "artifact_id": id }))
+        .await
+        .unwrap();
+    json_of(&read)
+}
+
+#[tokio::test]
+async fn a_file_reads_as_its_extracted_text() {
+    assert_eq!(
+        read_file("plan.docx", true).await["content"],
+        "QUARTERLY PLAN"
+    );
+}
+
+#[tokio::test]
+async fn a_file_with_no_text_says_so_instead_of_failing() {
+    let read = read_file("plan.bin", true).await;
+    assert!(read.get("content").is_none());
+    assert!(read["unreadable"].as_str().unwrap().contains("no text"));
+    let plain = read_file("plan.docx", false).await;
+    assert!(plain.get("content").is_none());
+    let failed = read_file("plan.bad", true).await;
+    assert!(failed["unreadable"]
+        .as_str()
+        .unwrap()
+        .contains("unreadable"));
 }

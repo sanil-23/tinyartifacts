@@ -21,6 +21,7 @@ use crate::file_ref::{FileRef, FileRefError, FileRoots};
 use crate::file_store::FileStore;
 use crate::publish::{ArtifactPublisher, PublishOptions};
 use crate::store::ArtifactStore;
+use crate::text::TextExtractor;
 use crate::types::{
     ArtifactAuthor, ArtifactKind, ArtifactRecord, ArtifactStatus, ArtifactVersion, PublishedLink,
 };
@@ -145,6 +146,7 @@ pub struct Artifacts {
     publisher: Option<Arc<dyn ArtifactPublisher>>,
     files: FileRoots,
     file_store: Option<Arc<dyn FileStore>>,
+    text_extractor: Option<Arc<dyn TextExtractor>>,
 }
 
 impl std::fmt::Debug for Artifacts {
@@ -154,6 +156,7 @@ impl std::fmt::Debug for Artifacts {
             .field("publisher", &self.publisher.is_some())
             .field("files", &self.files)
             .field("file_store", &self.file_store.is_some())
+            .field("text_extractor", &self.text_extractor.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -169,6 +172,7 @@ impl Artifacts {
             publisher: None,
             files: FileRoots::default(),
             file_store: None,
+            text_extractor: None,
         }
     }
 
@@ -190,6 +194,14 @@ impl Artifacts {
     #[must_use]
     pub fn with_file_roots(mut self, files: FileRoots) -> Self {
         self.files = files;
+        self
+    }
+
+    /// Read file artifacts as text with `extractor`. Without one a file
+    /// artifact has no readable text.
+    #[must_use]
+    pub fn with_text_extractor(mut self, extractor: Arc<dyn TextExtractor>) -> Self {
+        self.text_extractor = Some(extractor);
         self
     }
 
@@ -277,6 +289,31 @@ impl Artifacts {
         );
         self.store.upsert(&record).await?;
         Ok(self.saved(record, false, ArtifactEventKind::Pending).await)
+    }
+
+    /// The newest content of `record` as text: a text version's own body, or
+    /// what the extractor reads from a file version. `None` when a file has no
+    /// text to read, its format has none or no extractor is configured.
+    ///
+    /// # Errors
+    ///
+    /// When the file cannot be fetched or extraction fails.
+    pub async fn readable_text(&self, record: &ArtifactRecord) -> anyhow::Result<Option<String>> {
+        let Some(latest) = record.latest() else {
+            return Ok(None);
+        };
+        if !record.holds_file() {
+            return Ok(Some(latest.body.clone()));
+        }
+        let (Some(file), Some(store), Some(extractor)) =
+            (&latest.file, &self.file_store, &self.text_extractor)
+        else {
+            return Ok(None);
+        };
+        let bytes = store.read(&file.key).await?;
+        extractor
+            .extract(file.file_name().unwrap_or(&file.key), &bytes)
+            .await
     }
 
     /// Append a version (completing a pending artifact). A text revision

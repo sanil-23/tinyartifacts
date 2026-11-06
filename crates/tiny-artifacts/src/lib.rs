@@ -50,6 +50,7 @@ pub mod publish;
 pub mod service;
 pub mod storage;
 pub mod store;
+pub mod text;
 pub mod tools;
 pub mod types;
 
@@ -62,6 +63,7 @@ pub use publish::{ArtifactPublisher, PublishOptions};
 pub use service::{Artifacts, ArtifactsError, Author, Content, Published, Saved};
 pub use storage::collections;
 pub use store::ArtifactStore;
+pub use text::TextExtractor;
 pub use tools::{
     registered_tools, CreateArtifactTool, DeleteArtifactTool, ListArtifactsTool, ReadArtifactTool,
     ShareArtifactTool, UpdateArtifactTool,

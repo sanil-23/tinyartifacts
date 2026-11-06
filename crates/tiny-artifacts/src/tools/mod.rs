@@ -77,6 +77,14 @@ pub(crate) fn content_for(kind: ArtifactKind, args: &serde_json::Value) -> anyho
                 )
             })
     } else {
+        // A path here names a file this kind cannot hold: refused, so a call
+        // that carried one never stands in the history as an example to copy.
+        if optional_str(args, "path").is_some() {
+            anyhow::bail!(
+                "`path` is only for image and file artifacts; a `{}` artifact takes its content as `body`",
+                kind.as_str()
+            );
+        }
         // Text is taken as written: surrounding whitespace can be content.
         args.get("body")
             .and_then(serde_json::Value::as_str)

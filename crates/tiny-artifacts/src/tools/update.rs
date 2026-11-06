@@ -39,12 +39,12 @@ impl Tool for UpdateArtifactTool {
 
     fn description(&self) -> &'static str {
         "Append a new revision to an existing artifact; earlier versions are \
-         kept. To add to the end of a text artifact, pass only the new lines \
-         as `append`: the existing content is kept, so nothing needs reading. \
-         To change existing content, call `read_artifact` first, then pass \
-         the full new `body`, never a body written from memory. Image and \
-         file artifacts take the new file's `path`. A body identical to the \
-         newest version adds nothing. Use this, not `create_artifact`, to \
+         kept. Call `read_artifact` first. To add to the end of a text \
+         artifact, pass only the new lines as `append`: the existing content \
+         is kept. To change existing content, pass the full new `body`, \
+         written from what `read_artifact` returned, never from memory. Image \
+         and file artifacts take the new file's `path`. A body identical to \
+         the newest version adds nothing. Use this, not `create_artifact`, to \
          change an artifact: it stays the same artifact under the same id. \
          Returns the new version number."
     }
