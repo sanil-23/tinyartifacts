@@ -44,8 +44,10 @@ impl Tool for CreateArtifactTool {
          `text` (plain text). File kinds take `path`, a file you already wrote \
          in your working folder: `image` (an image), `file` (any other file — a \
          PDF, a spreadsheet, an archive). Use this instead of only writing a \
-         file: a file that is not an artifact never reaches the user. Returns \
-         the artifact id — pass it to `update_artifact` for later revisions."
+         file: a file that is not an artifact never reaches the user. To \
+         change an artifact that already exists, use `update_artifact`: \
+         creating it again makes a second copy. Returns the artifact id — \
+         pass it to `update_artifact` for later revisions."
     }
 
     fn parameters_schema(&self) -> Value {

@@ -36,8 +36,10 @@ impl Tool for ReadArtifactTool {
 
     fn description(&self) -> &'static str {
         "Fetch one artifact by its `artifact_id`, returning its full record \
-         with all versions, timestamps and authorship. Use `list_artifacts` \
-         first to discover artifact ids."
+         with all versions, timestamps and authorship. The id is the one \
+         `create_artifact` or `update_artifact` returned, or `list_artifacts` \
+         lists. Read an artifact before changing it: the record is current, \
+         and your memory of it may not be."
     }
 
     fn parameters_schema(&self) -> Value {

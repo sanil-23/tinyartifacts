@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use tiny_artifacts::{
-    ArtifactAuthor, ArtifactEvent, ArtifactEventKind, ArtifactKind, ArtifactObserver,
-    ArtifactPublisher, ArtifactRecord, ArtifactStatus, ArtifactStore, ArtifactVersion, Artifacts,
-    ArtifactsError, Author, BlobFileStore, Content, CreateArtifactTool, DeleteArtifactTool,
-    FileRefError, FileRoots, FileStore, PublishOptions, PublishedLink, ShareArtifactTool,
-    UpdateArtifactTool,
+    registered_tools, ArtifactAuthor, ArtifactEvent, ArtifactEventKind, ArtifactKind,
+    ArtifactObserver, ArtifactPublisher, ArtifactRecord, ArtifactStatus, ArtifactStore,
+    ArtifactVersion, Artifacts, ArtifactsError, Author, BlobFileStore, Content, CreateArtifactTool,
+    DeleteArtifactTool, FileRefError, FileRoots, FileStore, PublishOptions, PublishedLink,
+    ShareArtifactTool, UpdateArtifactTool,
 };
 use tinystoragedrivers_testkit::memory_storage;
 use tinystoragedrivers_types::Scope;
@@ -809,4 +809,47 @@ async fn text_versions_are_not_copied() {
         .is_none());
     let shown = format!("{artifacts:?}");
     assert!(shown.contains("file_store: true"), "{shown}");
+}
+
+async fn updated(body: &str, args: serde_json::Value) -> anyhow::Result<String> {
+    let artifacts = Arc::new(Artifacts::new(Arc::new(MemStore::default())));
+    let tools = registered_tools(artifacts.clone(), Author::agent("writer"));
+    let tool = |name: &str| tools.iter().find(|t| t.name() == name).unwrap();
+    let created = tool("create_artifact")
+        .execute(json!({ "kind": "text", "title": "T", "body": body }))
+        .await
+        .unwrap();
+    let id = json_of(&created)["artifact_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut call = args;
+    call["artifact_id"] = json!(id);
+    tool("update_artifact").execute(call).await?;
+    let record = artifacts.get(&id).await.unwrap().unwrap();
+    Ok(record.latest().unwrap().body.clone())
+}
+
+#[tokio::test]
+async fn append_adds_lines_and_keeps_the_existing_content() {
+    assert_eq!(
+        updated("one\ntwo", json!({ "append": "three" }))
+            .await
+            .unwrap(),
+        "one\ntwo\nthree"
+    );
+    assert_eq!(
+        updated("one\ntwo\n", json!({ "append": "three" }))
+            .await
+            .unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[tokio::test]
+async fn append_is_refused_with_a_body_and_when_empty() {
+    let both = updated("one", json!({ "append": "two", "body": "x" })).await;
+    assert!(both.unwrap_err().to_string().contains("not both"));
+    let empty = updated("one", json!({ "append": "  " })).await;
+    assert!(empty.unwrap_err().to_string().contains("lines to add"));
 }
